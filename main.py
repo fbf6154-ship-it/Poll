@@ -19,24 +19,26 @@ from telegram.ext import (
 )
 
 # ----------------- CONFIGURATION ----------------- #
-# আপনার Bot Token ও Admin User ID এখানে দিন
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN")
-ADMIN_ID = int(os.environ.get("ADMIN_ID", "123456789")) # আপনার টেলিগ্রাম নিউমেরিক আইডি
+# TOKEN বা BOT_TOKEN যেকোনো নামেই থাকুক এটি কাজ করবে
+BOT_TOKEN = os.environ.get("BOT_TOKEN") or os.environ.get("TOKEN")
 
-# Flask Server for Render (UptimeRobot ping)
+# ADMIN ID পাওয়া না গেলে ডিফল্ট 0 থাকবে (অথবা আপনার আইডি এখানে বসাতে পারেন)
+ADMIN_ID_RAW = os.environ.get("ADMIN_ID", "0")
+ADMIN_ID = int(ADMIN_ID_RAW) if ADMIN_ID_RAW.isdigit() else 0
+
+# ----------------- FLASK SERVER (For 24/7 Render) ----------------- #
 server = Flask(__name__)
 
 @server.route('/')
 def home():
-    return "Bot is running perfectly 24/7!"
+    return "✅ Bot is active and running 24/7!"
 
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
     server.run(host="0.0.0.0", port=port)
 
-# In-memory Database
+# In-memory Storage
 polls_db = {}
-user_states = {}
 
 # Conversation States
 GET_CHANNEL, GET_TITLE, GET_OPTIONS = range(3)
@@ -62,7 +64,7 @@ def generate_poll_markup(poll_id, poll_data):
         keyboard.append(row)
     return InlineKeyboardMarkup(keyboard)
 
-# ----------------- BOT HANDLERS ----------------- #
+# ----------------- HANDLERS ----------------- #
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
         "👋 **স্বাগতম Poll Maker Bot-এ!**\n\n"
@@ -92,11 +94,11 @@ async def receive_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ বট এই চ্যানেলে অ্যাডমিন নয়! দয়া করে অ্যাডমিন বানিয়ে আবার ইউজারনেম দিন:")
             return GET_CHANNEL
     except Exception as e:
-        await update.message.reply_text(f"❌ চ্যানেল খুঁজে পাওয়া যায়নি অথবা বট অ্যাডমিন নয়। এরর: {str(e)}\n\nসঠিক ইউজারনেম আবার দিন:")
+        await update.message.reply_text(f"❌ চ্যানেল খুঁজে পাওয়া যায়নি অথবা বট অ্যাডমিন নয়।\n\nসঠিক ইউজারনেম আবার দিন (যেমন: `@MyChannel`):")
         return GET_CHANNEL
 
     context.user_data["temp_channel"] = channel
-    await update.message.reply_text("✅ চ্যানেল সফলভাবে ভেরিফাই হয়েছে!\n\n📝 **ধাপ ২:** এখন পোলের **Title / বিষয়** লিখে পাঠান:")
+    await update.message.reply_text("✅ চ্যানেল ভেরিফাই হয়েছে!\n\n📝 **ধাপ ২:** এখন পোলের **Title / বিষয়** লিখে পাঠান:")
     return GET_TITLE
 
 async def receive_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -117,7 +119,7 @@ async def receive_options(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📌 বিষয়: {context.user_data['temp_title']}\n"
         f"🎯 অপশন সংখ্যা: {total_added} টি\n\n"
         f"{all_opts}\n\n"
-        f"আরো নাম যোগ করতে চাইলে নিচে **➕ Add New Option** দিন অথবা তৈরি শেষ করতে **✅ Confirm & Publish** দিন।"
+        f"আরো নাম যোগ করতে **➕ Add New Option** চাপুন অথবা শেষ করতে **✅ Confirm & Publish** দিন।"
     )
 
     markup = InlineKeyboardMarkup([
@@ -142,8 +144,8 @@ async def confirm_publish_callback(update: Update, context: ContextTypes.DEFAULT
     title = context.user_data.get("temp_title")
     options = context.user_data.get("temp_options", [])
 
-    if len(options) < 1:
-        await query.message.reply_text("❌ অন্তত ১টি অপশন থাকতে হবে!")
+    if not options:
+        await query.message.reply_text("❌ কোনো অপশন পাওয়া যায়নি!")
         return GET_OPTIONS
 
     poll_id = str(len(polls_db) + 101)
@@ -171,7 +173,7 @@ async def confirm_publish_callback(update: Update, context: ContextTypes.DEFAULT
             parse_mode="Markdown"
         )
         polls_db[poll_id]["message_id"] = sent_msg.message_id
-        await query.edit_message_text(f"🎉 **অভিনন্দন!** পোলটি সফলভাবে {channel} চ্যানেলে পাবলিশ করা হয়েছে!\n\n🆔 পোল আইডি: `{poll_id}`", parse_mode="Markdown")
+        await query.edit_message_text(f"🎉 **অভিনন্দন!** পোলটি সফলভাবে {channel} চ্যানেলে পাবলিশ হয়েছে!\n\n🆔 পোল আইডি: `{poll_id}`", parse_mode="Markdown")
     except Exception as e:
         await query.edit_message_text(f"❌ চ্যানেলে পোস্ট করতে সমস্যা হয়েছে: {str(e)}")
 
@@ -181,7 +183,7 @@ async def cancel_conv(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("বাতিল করা হয়েছে।", reply_markup=get_main_keyboard())
     return ConversationHandler.END
 
-# --- VOTING CALLBACK HANDLER --- #
+# --- VOTING HANDLER --- #
 async def vote_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
@@ -203,7 +205,6 @@ async def vote_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("🛑 এই পোলটি বন্ধ হয়ে গিয়েছে!", show_alert=True)
         return
 
-    # Check if user already voted
     if user_id in poll["voters"]:
         await query.answer("⚠️ আপনি ইতিমধ্যে ভোট দিয়েছেন!", show_alert=True)
         return
@@ -212,9 +213,9 @@ async def vote_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     poll["votes"][selected_opt] = poll["votes"].get(selected_opt, 0) + 1
     poll["voters"][user_id] = selected_opt
 
-    await query.answer(f"✅ আপনার ভোট সফলভাবে {selected_opt} কে দেওয়া হয়েছে!", show_alert=False)
+    await query.answer(f"✅ আপনার ভোট সফলভাবে {selected_opt} কে দেওয়া হয়েছে!")
 
-    # Update channel message
+    # Update channel markup
     markup = generate_poll_markup(poll_id, poll)
     try:
         await query.edit_message_reply_markup(reply_markup=markup)
@@ -232,7 +233,7 @@ async def my_polls(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     for p in user_polls:
         status_text = "🟢 চলমান" if p["status"] == "active" else "🔴 বন্ধ"
-        summary = f"📊 **{p['title']}**\n🆔 আইডি: `{p['poll_id']}`\n📢 চ্যানেল: {p['channel']}\n📌 স্ট্যাটাস: {status_text}\n"
+        summary = f"📊 **{p['title']}**\n🆔 আইডি: `{p['poll_id']}`\n📢 চ্যানেল: {p['channel']}\n📌 স্ট্যাটাস: {status_text}"
         
         btns = []
         if p["status"] == "active":
@@ -246,31 +247,31 @@ async def end_poll_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if poll_id in polls_db:
         poll = polls_db[poll_id]
-        if query.from_user.id == poll["owner_id"] or query.from_user.id == ADMIN_ID:
+        if query.from_user.id == poll["owner_id"] or (ADMIN_ID != 0 and query.from_user.id == ADMIN_ID):
             poll["status"] = "closed"
             await query.answer("✅ পোলটি বন্ধ করা হয়েছে!")
-            await query.edit_message_text(f"🛑 পোল `{poll_id}` এখন বন্ধ। আর কোনো ভোট দেওয়া যাবে না।", parse_mode="Markdown")
+            await query.edit_message_text(f"🛑 পোল `{poll_id}` এখন বন্ধ করা হয়েছে।", parse_mode="Markdown")
             
-            # Channel message edit (optional disabled notice)
             try:
                 await context.bot.edit_message_text(
                     chat_id=poll["channel"],
                     message_id=poll["message_id"],
-                    text=f"🛑 **পোল বন্ধ করা হয়েছে!**\n\n🗳️ {poll['title']}\n\n🏆 ভোট প্রদান শেষ।",
+                    text=f"🛑 **পোল বন্ধ করা হয়েছে!**\n\n🗳️ {poll['title']}\n\n🏆 ভোট গ্রহণ সমাপ্ত।",
                     parse_mode="Markdown"
                 )
             except Exception:
                 pass
         else:
-            await query.answer("❌ শুধুমাত্র পোলের মালিক এটি বন্ধ করতে পারে!", show_alert=True)
+            await query.answer("❌ শুধুমাত্র পোলের মালিক এটি বন্ধ করতে পারবে!", show_alert=True)
 
-# --- SUPER ADMIN FEATURES (ভোট ইচ্ছামতো বাড়ানো/কমানো) --- #
+# --- ADMIN FEATURES --- #
 async def all_polls_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
+    user_id = update.effective_user.id
+    if ADMIN_ID != 0 and user_id != ADMIN_ID:
         return
 
     if not polls_db:
-        await update.message.reply_text("কোনো পোল নেই।")
+        await update.message.reply_text("কোনো পোল তৈরি করা হয়নি।")
         return
 
     msg = "👑 **সকল পোলের তালিকা:**\n\n"
@@ -280,14 +281,14 @@ async def all_polls_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg += f"  - [{i}] {opt}: {p['votes'].get(opt, 0)} ভোট\n"
         msg += "\n"
 
-    msg += "\n💡 **ভোট বাড়াতে লিখুন:**\n`/setvote <poll_id> <opt_index> <vote_amount>`\nউদাহরণ: `/setvote 101 0 50`"
+    msg += "\n💡 **ভোট বাড়াতে লিখুন:**\n`/setvote <poll_id> <opt_index> <vote_amount>`\nযেমন: `/setvote 101 0 50`"
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 async def set_vote_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
+    user_id = update.effective_user.id
+    if ADMIN_ID != 0 and user_id != ADMIN_ID:
         return
 
-    # Command format: /setvote <poll_id> <opt_index> <votes>
     try:
         args = context.args
         poll_id = args[0]
@@ -299,7 +300,6 @@ async def set_vote_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
             target_opt = poll["options"][opt_idx]
             poll["votes"][target_opt] = new_votes
 
-            # Update Channel UI
             markup = generate_poll_markup(poll_id, poll)
             await context.bot.edit_message_reply_markup(
                 chat_id=poll["channel"],
@@ -308,13 +308,17 @@ async def set_vote_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             await update.message.reply_text(f"✅ `{target_opt}` এর ভোট পরিবর্তন করে `{new_votes}` করা হয়েছে!")
         else:
-            await update.message.reply_text("❌ Poll ID খুঁজে পাওয়া যায়নি!")
+            await update.message.reply_text("❌ Poll ID পাওয়া যায়নি!")
     except Exception as e:
-        await update.message.reply_text(f"❌ কমান্ড ফরম্যাট ভুল!\nব্যবহার করুন: `/setvote <poll_id> <opt_index> <amount>`\nError: {e}")
+        await update.message.reply_text(f"❌ ফরম্যাট: `/setvote <poll_id> <opt_index> <amount>`")
 
-# ----------------- MAIN APP ----------------- #
+# ----------------- MAIN ----------------- #
 def main():
-    # Start Flask thread for Render
+    if not BOT_TOKEN:
+        print("❌ ERROR: No BOT_TOKEN found! Check your Environment Variables.")
+        return
+
+    # Start Flask Webserver
     threading.Thread(target=run_flask, daemon=True).start()
 
     # Telegram Application
@@ -342,12 +346,10 @@ def main():
     app.add_handler(MessageHandler(filters.Regex("^📊 My Polls$"), my_polls))
     app.add_handler(CallbackQueryHandler(vote_callback, pattern="^vote_"))
     app.add_handler(CallbackQueryHandler(end_poll_callback, pattern="^endpoll_"))
-    
-    # Admin Handlers
     app.add_handler(CommandHandler("allpolls", all_polls_admin))
     app.add_handler(CommandHandler("setvote", set_vote_admin))
 
-    print("🤖 Poll Bot is starting...")
+    print("🤖 Poll Bot is running perfectly...")
     app.run_polling()
 
 if __name__ == "__main__":
