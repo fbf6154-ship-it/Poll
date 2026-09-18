@@ -21,14 +21,14 @@ from telegram.ext import (
 
 # ----------------- CONFIGURATION ----------------- #
 BOT_TOKEN = os.environ.get("BOT_TOKEN") or os.environ.get("TOKEN")
-ADMIN_ID = 8468523960  # আপনার ফিক্সড আইডি
+ADMIN_ID = 8468523960  # আপনার টেলিগ্রাম আইডি
 
-# ----------------- FLASK SERVER (For 24/7 Render) ----------------- #
+# ----------------- FLASK SERVER (24/7 Uptime) ----------------- #
 server = Flask(__name__)
 
 @server.route('/')
 def home():
-    return "✅ Advance Poll Bot is running 24/7!"
+    return "✅ Advance Poll Bot is active and running 24/7!"
 
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
@@ -37,7 +37,7 @@ def run_flask():
 # Database
 polls_db = {}
 config_db = {
-    "force_channel": None
+    "force_channel": None  # এডমিন /setforce দিয়ে সেট করবে
 }
 
 # Conversation States
@@ -80,24 +80,10 @@ def get_progress_bar(percentage):
     bar = "█" * filled + "─" * (10 - filled)
     return bar
 
-async def build_end_poll_result(poll, bot_username, context: ContextTypes.DEFAULT_TYPE):
+def build_end_poll_result(poll, bot_username):
     total_votes = sum(poll["votes"].values())
-    channel = poll["channel"]
     
-    # Check members who are currently in channel
-    real_votes_count = 0
-    candidate_real_votes = {opt: 0 for opt in poll["options"]}
-    
-    for uid, opt in poll["voters"].items():
-        try:
-            m = await context.bot.get_chat_member(chat_id=channel, user_id=uid)
-            if m.status in ["member", "administrator", "creator"]:
-                real_votes_count += 1
-                candidate_real_votes[opt] = candidate_real_votes.get(opt, 0) + 1
-        except Exception:
-            pass
-
-    # Find Top Option (Max Votes)
+    # সর্বোচ্চ ভোট পাওয়া অপশন নির্বাচন
     winner = max(poll["votes"], key=poll["votes"].get) if total_votes > 0 else "N/A"
     winner_votes = poll["votes"].get(winner, 0)
 
@@ -108,25 +94,23 @@ async def build_end_poll_result(poll, bot_username, context: ContextTypes.DEFAUL
 
     for idx, opt in enumerate(poll["options"]):
         c_votes = poll["votes"].get(opt, 0)
-        c_real = candidate_real_votes.get(opt, 0)
         pct = int((c_votes / total_votes * 100)) if total_votes > 0 else 0
         p_bar = get_progress_bar(pct)
         emoji = emojis[idx % len(emojis)]
 
         res += f"{emoji} <b>{html.escape(opt)}</b> ➔ {c_votes} ভোট\n"
-        res += f"➯ {p_bar} {pct}% ({c_real} জন চ্যানেলে আছে)\n\n"
+        res += f"➯ {p_bar} {pct}%\n\n"
 
     res += "━━━━━━━━━━━━━━━━━━━━\n"
     res += f"👑 <b>বিজয়ী ➔</b> ⚡ <b>{html.escape(winner)}</b> ({winner_votes} ভোট)\n\n"
-    res += f"📈 <b>মোট ভোট ➔</b> {total_votes} জন\n"
-    res += f"📊 <b>মোট আসল ভোট ➔</b> {real_votes_count} জন (চ্যানেলে আছেন)\n\n"
+    res += f"📈 <b>মোট ভোট ➔</b> {total_votes} জন\n\n"
     res += f"🛑 <b>পোল এখন বন্ধ করা হয়েছে।</b>\n"
     res += f"➡️ বিজয়ীকে উপরে বেছে নেওয়া হয়েছে।\n\n"
     res += f"⚡ <i>Poll Create :- @{bot_username}</i>"
 
     return res
 
-async def check_force_join(user_id, context: ContextTypes.DEFAULT_TYPE):
+async def is_user_member_of_force_channel(user_id, context: ContextTypes.DEFAULT_TYPE):
     channel = config_db.get("force_channel")
     if not channel:
         return True
@@ -142,7 +126,8 @@ async def check_force_join(user_id, context: ContextTypes.DEFAULT_TYPE):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     
-    if user_id != ADMIN_ID and not await check_force_join(user_id, context):
+    # Force Join Check
+    if user_id != ADMIN_ID and not await is_user_member_of_force_channel(user_id, context):
         channel = config_db["force_channel"]
         clean_ch = channel.replace("@", "")
         markup = InlineKeyboardMarkup([
@@ -150,7 +135,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🔄 চেক করুন", callback_data="check_joined")]
         ])
         await update.message.reply_text(
-            f"⚠️ <b>বটটি ব্যবহার করতে হলে আপনাকে আমাদের চ্যানেলে জয়েন করতে হবে!</b>\n\nচ্যানেল: {channel}",
+            f"⚠️ <b>বটটি ব্যবহার করতে হলে আপনাকে আমাদের চ্যানেলে জয়েন করতে হবে!</b>\n\n"
+            f"দয়া করে নিচের চ্যানেলে জয়েন করে <b>'🔄 চেক করুন'</b> বাটনে চাপ দিন:\n👉 {channel}",
             reply_markup=markup,
             parse_mode="HTML"
         )
@@ -162,7 +148,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "পোল তৈরি করতে নিচের <b>➕ Create Poll</b> বাটনে চাপ দিন।"
     )
     if user_id == ADMIN_ID:
-        msg += "\n\n👑 <b>অ্যাডমিন কমান্ডসমূহ:</b>\n" \
+        msg += "\n\n👑 <b>অ্যাডমিন কন্ট্রোল:</b>\n" \
                "• <code>/allpolls</code> - সব পোল দেখা\n" \
                "• <code>/setvote &lt;poll_id&gt; &lt;index&gt; &lt;votes&gt;</code> - ভোট বাড়ানো\n" \
                "• <code>/setforce @ChannelUsername</code> - Force Join সেট করা\n" \
@@ -173,27 +159,42 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def check_joined_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
-    if await check_force_join(user_id, context):
-        await query.answer("✅ ধন্যবাদ! আপনি চ্যানেলে জয়েন করেছেন।", show_alert=True)
-        await query.message.delete()
+    
+    if await is_user_member_of_force_channel(user_id, context):
+        await query.answer("✅ ধন্যবাদ! চ্যানেল জয়েন কনফার্ম হয়েছে।", show_alert=True)
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
         await context.bot.send_message(
             chat_id=user_id,
-            text="👋 স্বাগতম! এখন আপনি পোল তৈরি করতে পারবেন।",
-            reply_markup=get_main_keyboard()
+            text="👋 স্বাগতম! এখন আপনি সহজে পোল তৈরি করতে পারবেন।\nনিচের <b>➕ Create Poll</b> বাটনে চাপ দিন।",
+            reply_markup=get_main_keyboard(),
+            parse_mode="HTML"
         )
     else:
-        await query.answer("❌ আপনি এখনো চ্যানেলে জয়েন করেননি!", show_alert=True)
+        await query.answer("❌ আপনি এখনো চ্যানেলে জয়েন করেননি! দয়া করে আগে জয়েন করুন।", show_alert=True)
 
 # --- CREATE POLL CONVERSATION --- #
 async def create_poll_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if user_id != ADMIN_ID and not await check_force_join(user_id, context):
-        await update.message.reply_text("⚠️ দয়া করে আগে আমাদের চ্যানেলে জয়েন করুন। (/start দিন)")
+    if user_id != ADMIN_ID and not await is_user_member_of_force_channel(user_id, context):
+        channel = config_db["force_channel"]
+        clean_ch = channel.replace("@", "")
+        markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📢 চ্যানেলে জয়েন করুন", url=f"https://t.me/{clean_ch}")],
+            [InlineKeyboardButton("🔄 চেক করুন", callback_data="check_joined")]
+        ])
+        await update.message.reply_text(
+            f"⚠️ <b>পোল তৈরি করতে হলে আগে চ্যানেলে জয়েন করতে হবে!</b>\n\n👉 {channel}",
+            reply_markup=markup,
+            parse_mode="HTML"
+        )
         return ConversationHandler.END
 
     await update.message.reply_text(
         "📢 <b>ধাপ ১:</b> পোলটি যে চ্যানেল বা গ্রুপে পোস্ট করবেন, সেটির User Name দিন (যেমন: <code>@MyChannel</code>)।\n\n"
-        "⚠️ <i>বটকে ওই চ্যানেল/গ্রুপে অবশ্যই অ্যাডমিন রাখতে হবে।</i>",
+        "⚠️ <i>বটকে ওই চ্যানেল/গ্রুপে অবশ্যই অ্যাডমিন (Post Messages পারমিশন সহ) রাখতে হবে।</i>",
         parse_mode="HTML"
     )
     return GET_CHANNEL
@@ -206,7 +207,7 @@ async def receive_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         bot_member = await context.bot.get_chat_member(chat_id=channel, user_id=context.bot.id)
         if bot_member.status not in ["administrator", "creator"]:
-            await update.message.reply_text("❌ বট এই চ্যানেল/গ্রুপে অ্যাডমিন নয়! অ্যাডমিন বানিয়ে আবার ইউজারনেম দিন:")
+            await update.message.reply_text("❌ বট এই চ্যানেল/গ্রুপে অ্যাডমিন নয়! দয়া করে অ্যাডমিন বানিয়ে আবার ইউজারনেম দিন:")
             return GET_CHANNEL
     except Exception:
         await update.message.reply_text("❌ চ্যানেল খুঁজে পাওয়া যায়নি অথবা বট অ্যাডমিন নয়। সঠিক ইউজারনেম আবার দিন:")
@@ -234,7 +235,7 @@ async def receive_options(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📌 বিষয়: {html.escape(context.user_data['temp_title'])}\n"
         f"🎯 মোট অপশন: {total_added} টি\n\n"
         f"{all_opts}\n\n"
-        f"আরো অপশন যোগ করতে <b>➕ Add New Option</b> চাপুন অথবা শেষ করতে <b>✅ Confirm & Publish</b> দিন।"
+        f"আরো অপশন যোগ করতে <b>➕ Add New Option</b> চাপুন অথবা তৈরি সম্পন্ন করতে <b>✅ Confirm & Publish</b> দিন।"
     )
 
     markup = InlineKeyboardMarkup([
@@ -326,7 +327,7 @@ async def vote_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("🛑 এই পোলটি বন্ধ হয়ে গিয়েছে!", show_alert=True)
         return
 
-    # Check Channel/Group Membership
+    # যে চ্যানেলে পোল আছে সেই চ্যানেলের মেম্বারশিপ চেক
     try:
         member = await context.bot.get_chat_member(chat_id=poll["channel"], user_id=user_id)
         if member.status in ["left", "kicked", "restricted"]:
@@ -370,25 +371,12 @@ async def my_polls(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     for p in user_polls:
         status_text = "🟢 চলমান" if p["status"] == "active" else "🔴 বন্ধ"
-        
-        # Real-time calculation of channel voters
-        real_in_channel = 0
-        for voter_id in p["voters"].keys():
-            try:
-                m = await context.bot.get_chat_member(chat_id=p["channel"], user_id=voter_id)
-                if m.status in ["member", "administrator", "creator"]:
-                    real_in_channel += 1
-            except Exception:
-                pass
-
         summary = (
             f"📊 <b>{html.escape(p['title'])}</b>\n"
             f"🆔 আইডি: <code>{p['poll_id']}</code>\n"
             f"📢 চ্যানেল: {p['channel']}\n"
             f"📌 স্ট্যাটাস: {status_text}\n"
-            f"🗳️ মোট ভোট: {sum(p['votes'].values())} জন\n"
-            f"✅ <b>চ্যানেলে আছে:</b> {real_in_channel} জন\n"
-            f"❌ <b>চ্যানেল ছেড়েছে/নাই:</b> {len(p['voters']) - real_in_channel} জন"
+            f"🗳️ মোট ভোট: {sum(p['votes'].values())} জন"
         )
         
         btns = []
@@ -411,7 +399,7 @@ async def end_poll_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Post Final Result in Channel
             try:
                 bot_user = await context.bot.get_me()
-                result_text = await build_end_poll_result(poll, bot_user.username, context)
+                result_text = build_end_poll_result(poll, bot_user.username)
                 
                 result_btn = InlineKeyboardMarkup([
                     [InlineKeyboardButton("🧊 বিনামূল্যে পোল তৈরি করুন", url=f"https://t.me/{bot_user.username}")]
@@ -497,7 +485,7 @@ async def set_force_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not channel.startswith("@"):
                 channel = "@" + channel
             config_db["force_channel"] = channel
-            await update.message.reply_text(f"✅ বট ব্যবহারের জন্য Force Join সেট করা হয়েছে: <b>{channel}</b>", parse_mode="HTML")
+            await update.message.reply_text(f"✅ বট ব্যবহারের জন্য Force Join সেট করা হয়েছে: <b>{channel}</b>\n\nএখন যে কেউ বট দিয়ে পোল বানাতে চাইলে তাকে আগে এই চ্যানেলে জয়েন করতে হবে।", parse_mode="HTML")
     except Exception:
         await update.message.reply_text("❌ ব্যবহার করুন:\n• <code>/setforce @ChannelUsername</code>\n• <code>/setforce off</code>", parse_mode="HTML")
 
