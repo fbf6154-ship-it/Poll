@@ -34,10 +34,10 @@ def run_flask():
     port = int(os.environ.get("PORT", 8080))
     server.run(host="0.0.0.0", port=port)
 
-# In-memory Databases
+# Databases
 polls_db = {}
 config_db = {
-    "force_channel": None  # Example: "@MyForceChannel"
+    "force_channel": None  # বট ব্যবহারের জন্য আলাদা ফোর্স চ্যানেল
 }
 
 # Conversation States
@@ -78,7 +78,7 @@ def generate_poll_markup(poll_id, poll_data):
 async def check_force_join(user_id, context: ContextTypes.DEFAULT_TYPE):
     channel = config_db.get("force_channel")
     if not channel:
-        return True  # কোনো চ্যানেল সেট করা না থাকলে সবাই ব্যবহার করতে পারবে
+        return True
     try:
         member = await context.bot.get_chat_member(chat_id=channel, user_id=user_id)
         if member.status in ["member", "administrator", "creator"]:
@@ -91,7 +91,7 @@ async def check_force_join(user_id, context: ContextTypes.DEFAULT_TYPE):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     
-    # Check Force Join
+    # Check Bot Force Join
     if user_id != ADMIN_ID and not await check_force_join(user_id, context):
         channel = config_db["force_channel"]
         clean_ch = channel.replace("@", "")
@@ -142,8 +142,8 @@ async def create_poll_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     await update.message.reply_text(
-        "📢 <b>ধাপ ১:</b> পোলটি যে চ্যানেলে পোস্ট করবেন, সেই চ্যানেলের User Name দিন (যেমন: <code>@MyChannel</code>)।\n\n"
-        "⚠️ <i>বটকে ওই চ্যানেলে অবশ্যই অ্যাডমিন (Post Messages পারমিশন সহ) রাখতে হবে।</i>",
+        "📢 <b>ধাপ ১:</b> পোলটি যে চ্যানেল বা গ্রুপে পোস্ট করবেন, সেটির User Name দিন (যেমন: <code>@MyChannel</code>)।\n\n"
+        "⚠️ <i>বটকে ওই চ্যানেল/গ্রুপে অবশ্যই অ্যাডমিন (Post Messages পারমিশন সহ) রাখতে হবে।</i>",
         parse_mode="HTML"
     )
     return GET_CHANNEL
@@ -156,14 +156,14 @@ async def receive_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         bot_member = await context.bot.get_chat_member(chat_id=channel, user_id=context.bot.id)
         if bot_member.status not in ["administrator", "creator"]:
-            await update.message.reply_text("❌ বট এই চ্যানেলে অ্যাডমিন নয়! অ্যাডমিন বানিয়ে আবার ইউজারনেম দিন:")
+            await update.message.reply_text("❌ বট এই চ্যানেল/গ্রুপে অ্যাডমিন নয়! অ্যাডমিন বানিয়ে আবার ইউজারনেম দিন:")
             return GET_CHANNEL
     except Exception:
-        await update.message.reply_text("❌ চ্যানেল খুঁজে পাওয়া যায়নি অথবা বট অ্যাডমিন নয়। সঠিক ইউজারনেম আবার দিন:")
+        await update.message.reply_text("❌ চ্যানেল/গ্রুপ খুঁজে পাওয়া যায়নি অথবা বট অ্যাডমিন নয়। সঠিক ইউজারনেম আবার দিন:")
         return GET_CHANNEL
 
     context.user_data["temp_channel"] = channel
-    await update.message.reply_text("✅ চ্যানেল ভেরিফাই হয়েছে!\n\n📝 <b>ধাপ ২:</b> এখন পোলের <b>Title / বিষয়</b> লিখে পাঠান:", parse_mode="HTML")
+    await update.message.reply_text("✅ চ্যানেল/গ্রুপ ভেরিফাই হয়েছে!\n\n📝 <b>ধাপ ২:</b> এখন পোলের <b>Title / বিষয়</b> লিখে পাঠান:", parse_mode="HTML")
     return GET_TITLE
 
 async def receive_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -229,7 +229,7 @@ async def confirm_publish_callback(update: Update, context: ContextTypes.DEFAULT
     }
     polls_db[poll_id] = poll_data
 
-    # Send Poll Message with safe HTML formatting
+    # Send Poll Message
     poll_text = generate_poll_text(poll_data, bot_user.username)
     markup = generate_poll_markup(poll_id, poll_data)
 
@@ -255,7 +255,7 @@ async def cancel_conv(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("বাতিল করা হয়েছে।", reply_markup=get_main_keyboard())
     return ConversationHandler.END
 
-# --- VOTING HANDLER --- #
+# --- VOTING HANDLER (With Channel/Group Membership Check) --- #
 async def vote_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
@@ -277,6 +277,17 @@ async def vote_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("🛑 এই পোলটি বন্ধ হয়ে গিয়েছে!", show_alert=True)
         return
 
+    # 🔒 গ্রুপ/চ্যানেলে মেম্বার আছে কিনা ভেরিফিকেশন
+    try:
+        member = await context.bot.get_chat_member(chat_id=poll["channel"], user_id=user_id)
+        if member.status in ["left", "kicked", "restricted"]:
+            await query.answer("⚠️ ভোট দিতে হলে আগে আপনাকে এই চ্যানেল/গ্রুপে জয়েন করতে হবে!", show_alert=True)
+            return
+    except Exception:
+        # যদি কোনো কারণে প্রাইভেট চ্যানেলের মেম্বার চেক ব্লক থাকে
+        pass
+
+    # একবার ভোট দিলে আর দেওয়া যাবে না
     if user_id in poll["voters"]:
         await query.answer("⚠️ আপনি ইতিমধ্যে ভোট দিয়েছেন!", show_alert=True)
         return
@@ -285,9 +296,9 @@ async def vote_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     poll["votes"][selected_opt] = poll["votes"].get(selected_opt, 0) + 1
     poll["voters"][user_id] = selected_opt
 
-    await query.answer(f"✅ আপনার ভোট সফলভাবে {selected_opt} কে দেওয়া হয়েছে!")
+    await query.answer(f"✅ আপনার ভোট সফলভাবে {selected_opt} কে দেওয়া হয়েছে!", show_alert=False)
 
-    # Live Update Poll Post in Channel (Text + Keyboard)
+    # Live Update Poll Post (Text + Keyboard)
     bot_user = await context.bot.get_me()
     updated_text = generate_poll_text(poll, bot_user.username)
     markup = generate_poll_markup(poll_id, poll)
@@ -406,7 +417,7 @@ async def set_vote_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="HTML",
                 disable_web_page_preview=True
             )
-            await update.message.reply_text(f"✅ <code>{target_opt}</code> এর ভোট পরিবর্তন করে <code>{new_votes}</code> করা হয়েছে এবং মোট ভোট রিয়েল-টাইমে আপডেট হয়েছে!", parse_mode="HTML")
+            await update.message.reply_text(f"✅ <code>{target_opt}</code> এর ভোট পরিবর্তন করে <code>{new_votes}</code> করা হয়েছে এবং চ্যানেলে আপডেট হয়েছে!", parse_mode="HTML")
         else:
             await update.message.reply_text("❌ Poll ID পাওয়া যায়নি!")
     except Exception as e:
@@ -420,14 +431,14 @@ async def set_force_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         channel = context.args[0]
         if channel.lower() == "off":
             config_db["force_channel"] = None
-            await update.message.reply_text("✅ Force Join বন্ধ করা হয়েছে। এখন সবাই ফ্রিতে ব্যবহার করতে পারবে।")
+            await update.message.reply_text("✅ Force Join বন্ধ করা হয়েছে।")
         else:
             if not channel.startswith("@"):
                 channel = "@" + channel
             config_db["force_channel"] = channel
-            await update.message.reply_text(f"✅ Force Join সেট করা হয়েছে: <b>{channel}</b>\nএখন থেকে এই চ্যানেলে জয়েন না করলে কেউ পোল বানাতে পারবে না।", parse_mode="HTML")
+            await update.message.reply_text(f"✅ বট ব্যবহারের জন্য Force Join সেট করা হয়েছে: <b>{channel}</b>", parse_mode="HTML")
     except Exception:
-        await update.message.reply_text("❌ ব্যবহার করুন:\n• <code>/setforce @ChannelUsername</code>\n• <code>/setforce off</code> (বন্ধ করতে)", parse_mode="HTML")
+        await update.message.reply_text("❌ ব্যবহার করুন:\n• <code>/setforce @ChannelUsername</code>\n• <code>/setforce off</code>", parse_mode="HTML")
 
 # ----------------- MAIN RUNNER ----------------- #
 def main():
