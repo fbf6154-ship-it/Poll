@@ -42,7 +42,7 @@ config_db = {
 
 # Conversation States
 GET_CHANNEL, GET_TITLE, GET_OPTIONS = range(3)
-EDIT_MENU, EDIT_TITLE_INPUT, CHOOSE_OPT, EDIT_OPT_INPUT = range(3, 7)
+EDIT_MENU, EDIT_TITLE_INPUT, CHOOSE_OPT, EDIT_OPT_INPUT, ADD_OPT_INPUT = range(3, 8)
 
 # ----------------- HELPER FUNCTIONS ----------------- #
 def get_main_keyboard():
@@ -57,23 +57,31 @@ def generate_poll_text(poll_data, bot_username):
     text = (
         f"🗳️ <b>{title}</b>\n\n"
         f"📊 <b>মোট ভোট:</b> {total_votes} টি\n"
-        f"🤖 <b>Powered by</b> <a href='https://t.me/{bot_username}'>@{bot_username}</a>"
+        f"🤖 <b>Powered by</b> @{bot_username}"
     )
     return text
 
 def generate_poll_markup(poll_id, poll_data):
     keyboard = []
     row = []
+    layout = poll_data.get("layout", 2)  # ১ লাইনে ১টি বা ২টি
+    
     for idx, opt in enumerate(poll_data["options"]):
         votes = poll_data["votes"].get(opt, 0)
         btn_text = f"{opt} ({votes})"
         callback = f"vote_{poll_id}_{idx}"
-        row.append(InlineKeyboardButton(btn_text, callback_data=callback))
-        if len(row) == 2:
-            keyboard.append(row)
-            row = []
-    if row:
+        
+        if layout == 1:
+            keyboard.append([InlineKeyboardButton(btn_text, callback_data=callback)])
+        else:
+            row.append(InlineKeyboardButton(btn_text, callback_data=callback))
+            if len(row) == 2:
+                keyboard.append(row)
+                row = []
+                
+    if layout == 2 and row:
         keyboard.append(row)
+        
     return InlineKeyboardMarkup(keyboard)
 
 def get_progress_bar(percentage):
@@ -106,17 +114,15 @@ def build_end_poll_result(poll, bot_username):
     res += f"📈 <b>মোট ভোট ➔</b> {total_votes} জন\n\n"
     res += f"🛑 <b>পোল এখন বন্ধ করা হয়েছে।</b>\n"
     res += f"➡️ বিজয়ীকে উপরে বেছে নেওয়া হয়েছে।\n\n"
-    res += f"⚡ <i>Poll Create :- @{bot_username}</i>"
+    res += f"⚡ <i>Poll Created by: @{bot_username}</i>"
 
     return res
 
 async def analyze_poll_voters(context: ContextTypes.DEFAULT_TYPE, poll):
-    """ভোটারদের মেম্বারশিপ যাচাই ও বিস্তারিত পরিসংখ্যান তৈরির ফাংশন"""
     channel = poll["channel"]
     voters = poll.get("voters", {})
     options = poll.get("options", [])
     
-    # গ্রুপের বর্তমান মেম্বার সংখ্যা সংগ্রহ
     try:
         group_total_members = await context.bot.get_chat_member_count(chat_id=channel)
     except Exception:
@@ -152,7 +158,6 @@ async def analyze_poll_voters(context: ContextTypes.DEFAULT_TYPE, poll):
     }
 
 async def update_poll_in_channel(context: ContextTypes.DEFAULT_TYPE, poll):
-    """চ্যানেলের লাইভ মেসেজ আপডেট করার ফাংশন"""
     try:
         bot_user = await context.bot.get_me()
         updated_text = generate_poll_text(poll, bot_user.username)
@@ -203,7 +208,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     msg = (
         "👋 <b>স্বাগতম Poll Maker Bot-এ!</b>\n\n"
-        "এখানে খুব সহজে আকর্ষণীয় বাটন পোল তৈরি, এডিট এবং ফুল অডিট রিপোর্ট দেখতে পারবেন।\n"
+        "এখানে খুব সহজে আকর্ষণীয় বাটন পোল তৈরি, নতুন অপশন যোগ, এডিট এবং ফুল অডিট রিপোর্ট দেখতে পারবেন।\n"
         "পোল তৈরি করতে নিচের <b>➕ Create Poll</b> বাটনে চাপ দিন।"
     )
     if user_id == ADMIN_ID:
@@ -252,7 +257,7 @@ async def create_poll_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     await update.message.reply_text(
-        "📢 <b>ধাপ ১:</b> পোলটি যে চ্যানেল বা গ্রুপে পোস্ট করবেন, সেটির User Name দিন (যেমন: <code>@MyChannel</code>)।\n\n"
+        "📢 <b>ধাপ ১:</b> পোলটি যে চ্যানেল বা গ্রুপে পোস্ট করবেন, সেটির ইউজারনেম দিন (যেমন: <code>@MyChannel</code>)।\n\n"
         "⚠️ <i>বটকে ওই চ্যানেল/গ্রুপে অবশ্যই অ্যাডমিন (Post Messages পারমিশন সহ) রাখতে হবে।</i>",
         parse_mode="HTML"
     )
@@ -273,36 +278,53 @@ async def receive_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return GET_CHANNEL
 
     context.user_data["temp_channel"] = channel
-    await update.message.reply_text("✅ চ্যানেল/গ্রুপ ভেরিফাই হয়েছে!\n\n📝 <b>ধাপ ২:</b> এখন পোলের <b>Title / বিষয়</b> লিখে পাঠান:", parse_mode="HTML")
+    await update.message.reply_text("✅ চ্যানেল/গ্রুপ ভেরিফাই হয়েছে!\n\n📝 <b>ধাপ ২:</b> এবার পোলের <b>Title / প্রশ্ন</b> লিখে পাঠান:", parse_mode="HTML")
     return GET_TITLE
 
 async def receive_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["temp_title"] = update.message.text
     context.user_data["temp_options"] = []
+    context.user_data["temp_layout"] = 2  # ডিফল্ট ২ টি বাটন প্রতি লাইনে
     await update.message.reply_text("✅ টাইটেল সেট হয়েছে!\n\n🔘 <b>ধাপ ৩:</b> এবার পোলের ১ম অপশনের নাম লিখে পাঠান:", parse_mode="HTML")
     return GET_OPTIONS
+
+async def render_options_preview(update_or_query, context: ContextTypes.DEFAULT_TYPE, is_query=False):
+    total_added = len(context.user_data["temp_options"])
+    all_opts = "\n".join([f"{i+1}. {html.escape(name)}" for i, name in enumerate(context.user_data["temp_options"])])
+    cur_layout = context.user_data.get("temp_layout", 2)
+    layout_text = "১ লাইনে ১টি" if cur_layout == 1 else "১ লাইনে ২টি"
+
+    text = (
+        f"📊 <b>পোলের প্রিভিউ:</b>\n"
+        f"📌 <b>বিষয়:</b> {html.escape(context.user_data['temp_title'])}\n"
+        f"🎯 <b>মোট অপশন:</b> {total_added} টি\n"
+        f"📐 <b>বাটন লেআউট:</b> <code>{layout_text}</code>\n\n"
+        f"<b>অপশনসমূহ:</b>\n{all_opts}\n\n"
+        f"আরো অপশন যোগ করতে <b>➕ Add Option</b> দিন, লেআউট পরিবর্তন করতে <b>📐 Switch Layout</b> চাপুন অথবা <b>✅ Confirm & Publish</b> দিন।"
+    )
+
+    markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton("➕ Add Option", callback_data="add_more_opt"), InlineKeyboardButton(f"📐 Layout: {layout_text}", callback_data="toggle_temp_layout")],
+        [InlineKeyboardButton("✅ Confirm & Publish", callback_data="confirm_publish")]
+    ])
+
+    if is_query:
+        await update_or_query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
+    else:
+        await update_or_query.reply_text(text, reply_markup=markup, parse_mode="HTML")
 
 async def receive_options(update: Update, context: ContextTypes.DEFAULT_TYPE):
     opt_name = update.message.text.strip()
     context.user_data["temp_options"].append(opt_name)
+    await render_options_preview(update.message, context, is_query=False)
+    return GET_OPTIONS
 
-    total_added = len(context.user_data["temp_options"])
-    all_opts = "\n".join([f"{i+1}. {html.escape(name)}" for i, name in enumerate(context.user_data["temp_options"])])
-
-    text = (
-        f"📊 <b>পোলের প্রিভিউ:</b>\n"
-        f"📌 বিষয়: {html.escape(context.user_data['temp_title'])}\n"
-        f"🎯 মোট অপশন: {total_added} টি\n\n"
-        f"{all_opts}\n\n"
-        f"আরো অপশন যোগ করতে <b>➕ Add New Option</b> চাপুন অথবা তৈরি সম্পন্ন করতে <b>✅ Confirm & Publish</b> দিন।"
-    )
-
-    markup = InlineKeyboardMarkup([
-        [InlineKeyboardButton("➕ Add New Option", callback_data="add_more_opt")],
-        [InlineKeyboardButton("✅ Confirm & Publish", callback_data="confirm_publish")]
-    ])
-
-    await update.message.reply_text(text, reply_markup=markup, parse_mode="HTML")
+async def toggle_temp_layout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    current = context.user_data.get("temp_layout", 2)
+    context.user_data["temp_layout"] = 1 if current == 2 else 2
+    await query.answer(f"লেআউট পরিবর্তন করে {'১টি' if context.user_data['temp_layout'] == 1 else '২টি'} প্রতি লাইন করা হয়েছে!")
+    await render_options_preview(query, context, is_query=True)
     return GET_OPTIONS
 
 async def add_more_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -318,6 +340,7 @@ async def confirm_publish_callback(update: Update, context: ContextTypes.DEFAULT
     channel = context.user_data.get("temp_channel")
     title = context.user_data.get("temp_title")
     options = context.user_data.get("temp_options", [])
+    layout = context.user_data.get("temp_layout", 2)
 
     if not options:
         await query.message.reply_text("❌ কোনো অপশন নেই!")
@@ -334,6 +357,7 @@ async def confirm_publish_callback(update: Update, context: ContextTypes.DEFAULT
         "options": options,
         "votes": {opt: 0 for opt in options},
         "voters": {},
+        "layout": layout,
         "status": "active",
         "message_id": None
     }
@@ -381,18 +405,23 @@ async def edit_poll_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data["editing_poll_id"] = poll_id
 
-    opts_preview = "\n".join([f"  {i+1}. {html.escape(opt)}" for i, opt in enumerate(poll["options"])])
+    opts_preview = "\n".join([f"  {i+1}. {html.escape(opt)} ({poll['votes'].get(opt, 0)} ভোট)" for i, opt in enumerate(poll["options"])])
+    cur_layout = "১টি বাটন" if poll.get("layout", 2) == 1 else "২টি বাটন"
+    
     msg = (
         f"✏️ <b>পোল এডিট প্যানেল</b>\n\n"
         f"🆔 পোল আইডি: <code>{poll_id}</code>\n"
-        f"📌 <b>বর্তমান টাইটেল:</b> {html.escape(poll['title'])}\n\n"
+        f"📌 <b>বর্তমান বিষয়:</b> {html.escape(poll['title'])}\n"
+        f"📐 <b>বর্তমান বাটন লেআউট:</b> প্রতি লাইনে <code>{cur_layout}</code>\n\n"
         f"🔘 <b>বর্তমান অপশনসমূহ:</b>\n{opts_preview}\n\n"
-        f"👉 আপনি কোনটি পরিবর্তন করতে চান? নিচের বাটনে চাপ দিন:"
+        f"👉 আপনি কি করতে চান? নিচের বাটনে চাপ দিন:"
     )
 
     markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton("➕ নতুন অপশন যোগ করুন", callback_data=f"addnewopt_{poll_id}")],
         [InlineKeyboardButton("📝 বিষয়/টাইটেল পরিবর্তন", callback_data=f"edittitle_{poll_id}")],
-        [InlineKeyboardButton("🔘 অপশনের নাম পরিবর্তন", callback_data=f"editoptmenu_{poll_id}")],
+        [InlineKeyboardButton("✏️ অপশনের নাম পরিবর্তন", callback_data=f"editoptmenu_{poll_id}")],
+        [InlineKeyboardButton(f"📐 বাটন লেআউট পরিবর্তন ({cur_layout})", callback_data=f"togglelayout_{poll_id}")],
         [InlineKeyboardButton("❌ বাতিল", callback_data="cancel_edit")]
     ])
 
@@ -400,10 +429,72 @@ async def edit_poll_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(msg, reply_markup=markup, parse_mode="HTML")
     return EDIT_MENU
 
+async def add_new_option_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text(
+        "➕ <b>পোলে যোগ করার জন্য নতুন অপশনের নাম লিখে মেসেজ দিন:</b>",
+        parse_mode="HTML"
+    )
+    return ADD_OPT_INPUT
+
+async def save_added_option(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    poll_id = context.user_data.get("editing_poll_id")
+    new_opt = update.message.text.strip()
+
+    if poll_id in polls_db:
+        poll = polls_db[poll_id]
+        if new_opt not in poll["options"]:
+            poll["options"].append(new_opt)
+            poll["votes"][new_opt] = 0
+            await update_poll_in_channel(context, poll)
+            await update.message.reply_text(
+                f"✅ <b>নতুন অপশন সফলভাবে যোগ করা হয়েছে!</b>\n\n"
+                f"অপশন: <b>{html.escape(new_opt)}</b>\n"
+                f"চ্যানেলে লাইভ আপডেট হয়ে গিয়েছে।",
+                reply_markup=get_main_keyboard(),
+                parse_mode="HTML"
+            )
+        else:
+            await update.message.reply_text("⚠️ এই অপশনটি ইতিমধ্যে পোলে বিদ্যমান!", reply_markup=get_main_keyboard())
+    return ConversationHandler.END
+
+async def toggle_layout_in_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    poll_id = query.data.split("_")[1]
+
+    if poll_id in polls_db:
+        poll = polls_db[poll_id]
+        cur = poll.get("layout", 2)
+        poll["layout"] = 1 if cur == 2 else 2
+        await update_poll_in_channel(context, poll)
+        new_text = "১টি বাটন" if poll["layout"] == 1 else "২টি বাটন"
+        await query.answer(f"✅ লেআউট পরিবর্তন করে প্রতি লাইনে {new_text} করা হয়েছে!")
+        
+        # রিফ্রেশ এডিট মেনু
+        opts_preview = "\n".join([f"  {i+1}. {html.escape(opt)} ({poll['votes'].get(opt, 0)} ভোট)" for i, opt in enumerate(poll["options"])])
+        msg = (
+            f"✏️ <b>পোল এডিট প্যানেল</b>\n\n"
+            f"🆔 পোল আইডি: <code>{poll_id}</code>\n"
+            f"📌 <b>বর্তমান বিষয়:</b> {html.escape(poll['title'])}\n"
+            f"📐 <b>বর্তমান বাটন লেআউট:</b> প্রতি লাইনে <code>{new_text}</code>\n\n"
+            f"🔘 <b>বর্তমান অপশনসমূহ:</b>\n{opts_preview}\n\n"
+            f"👉 আপনি কি করতে চান? নিচের বাটনে চাপ দিন:"
+        )
+        markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton("➕ নতুন অপশন যোগ করুন", callback_data=f"addnewopt_{poll_id}")],
+            [InlineKeyboardButton("📝 বিষয়/টাইটেল পরিবর্তন", callback_data=f"edittitle_{poll_id}")],
+            [InlineKeyboardButton("✏️ অপশনের নাম পরিবর্তন", callback_data=f"editoptmenu_{poll_id}")],
+            [InlineKeyboardButton(f"📐 বাটন লেআউট পরিবর্তন ({new_text})", callback_data=f"togglelayout_{poll_id}")],
+            [InlineKeyboardButton("❌ বাতিল", callback_data="cancel_edit")]
+        ])
+        await query.edit_message_text(msg, reply_markup=markup, parse_mode="HTML")
+        return EDIT_MENU
+
 async def edit_title_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("📝 পোলের <b>নতুন টাইটেল / বিষয়</b> লিখে রিপ্লাই পাঠান:", parse_mode="HTML")
+    await query.edit_message_text("📝 পোলের <b>নতুন বিষয় / টাইটেল</b> লিখে পাঠান:", parse_mode="HTML")
     return EDIT_TITLE_INPUT
 
 async def save_new_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -415,7 +506,7 @@ async def save_new_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
         poll["title"] = new_title
         await update_poll_in_channel(context, poll)
         await update.message.reply_text(
-            f"✅ <b>টাইটেল সফলভাবে পরিবর্তন হয়েছে!</b>\n\nনতুন বিষয়: <b>{html.escape(new_title)}</b>\nএবং চ্যানেলে আপডেট করে দেওয়া হয়েছে।",
+            f"✅ <b>টাইটেল সফলভাবে পরিবর্তন হয়েছে!</b>\n\nনতুন বিষয়: <b>{html.escape(new_title)}</b>\nএবং চ্যানেলে সাথে সাথে আপডেট হয়ে গেছে।",
             reply_markup=get_main_keyboard(),
             parse_mode="HTML"
         )
@@ -466,12 +557,10 @@ async def save_new_option(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if poll_id in polls_db and opt_idx is not None:
         poll = polls_db[poll_id]
         
-        # অপশন নাম রিপ্লেস এবং ভোটের হিসাব অক্ষুণ্ণ রাখা
         poll["options"][opt_idx] = new_name
         current_votes = poll["votes"].pop(old_name, 0)
         poll["votes"][new_name] = current_votes
 
-        # ভোটারদের ডাটাতেও আপডেট
         for voter_id, voted_opt in list(poll["voters"].items()):
             if voted_opt == old_name:
                 poll["voters"][voter_id] = new_name
@@ -535,7 +624,7 @@ async def vote_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     poll["votes"][selected_opt] = poll["votes"].get(selected_opt, 0) + 1
     poll["voters"][user_id] = selected_opt
 
-    await query.answer(f"✅ আপনার ভোট সফলভাবে {selected_opt} এ দেওয়া হয়েছে!", show_alert=False)
+    await query.answer(f"✅ আপনার ভোট সফলভাবে '{selected_opt}' এ যোগ হয়েছে!", show_alert=False)
     await update_poll_in_channel(context, poll)
 
 # --- MY POLLS & END POLL (WITH RETENTION AUDIT) --- #
@@ -583,7 +672,6 @@ async def end_poll_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer("⏳ পোল বন্ধ হচ্ছে এবং গ্রুপের মেম্বারদের যাচাই করা হচ্ছে...", show_alert=False)
     await query.edit_message_text("⏳ <b>পোলের ফলাফল ও মেম্বার অডিট তৈরি করা হচ্ছে... অনুগ্রহ করে একটু অপেক্ষা করুন।</b>", parse_mode="HTML")
 
-    # ভোটার ও গ্রুপের মেম্বারশিপ অডিট অ্যানালাইসিস
     analysis = await analyze_poll_voters(context, poll)
     bot_user = await context.bot.get_me()
 
@@ -591,7 +679,6 @@ async def end_poll_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     winner = max(poll["votes"], key=poll["votes"].get) if total_votes > 0 else "N/A"
     winner_votes = poll["votes"].get(winner, 0)
 
-    # ওনারের জন্য বিস্তারিত রিপোর্ট তৈরি
     owner_report = (
         f"🏆 <b>পোল ফলাফল ও মেম্বার অডিট রিপোর্ট</b> 🏆\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -627,7 +714,6 @@ async def end_poll_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.edit_message_text(owner_report, parse_mode="HTML")
 
-    # চ্যানেলে চূড়ান্ত ফলাফল পোস্ট করা
     try:
         result_text = build_end_poll_result(poll, bot_user.username)
         result_btn = InlineKeyboardMarkup([
@@ -725,6 +811,7 @@ def main():
             GET_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_title)],
             GET_OPTIONS: [
                 CallbackQueryHandler(add_more_callback, pattern="^add_more_opt$"),
+                CallbackQueryHandler(toggle_temp_layout_callback, pattern="^toggle_temp_layout$"),
                 CallbackQueryHandler(confirm_publish_callback, pattern="^confirm_publish$"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_options)
             ],
@@ -739,9 +826,14 @@ def main():
         ],
         states={
             EDIT_MENU: [
+                CallbackQueryHandler(add_new_option_chosen, pattern="^addnewopt_"),
+                CallbackQueryHandler(toggle_layout_in_edit, pattern="^togglelayout_"),
                 CallbackQueryHandler(edit_title_chosen, pattern="^edittitle_"),
                 CallbackQueryHandler(edit_options_menu, pattern="^editoptmenu_"),
                 CallbackQueryHandler(cancel_edit_callback, pattern="^cancel_edit$")
+            ],
+            ADD_OPT_INPUT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, save_added_option)
             ],
             EDIT_TITLE_INPUT: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, save_new_title)
